@@ -1529,80 +1529,99 @@ const MEDIA_BASE_URL = './gifs/';
 const MEDIA_EXTENSIONS = ['gif', 'mp4', 'webm', 'mov', 'jpg', 'png'];
 const MEDIA_VIDEO_EXTS  = new Set(['mp4', 'webm', 'mov', 'mkv']);
 
+// ── Converte path relativo para URL absoluta SEM re-encoding ──
+// new URL() codifica acentos e espaços — aqui usamos concatenação manual
+function toAbsUrl(path) {
+  if(!path) return '';
+  if(path.startsWith('http://') || path.startsWith('https://')) return path;
+  // Remove ./ do início e resolve contra location
+  const base = window.location.href.replace(/\/[^/]*$/, '/');
+  const clean = path.replace(/^\.\//, '');
+  return base + clean;
+}
+
 // ── Cache de slug (memoização) — O(1) após primeira chamada ──
 const _slugCache = Object.create(null);
 
+// Normalização ABNT2/ASCII completa:
+// 1. NFD decomposition (separa base+diacrítico)
+// 2. Remove diacríticos (acentos, cedilha, til, etc.)
+// 3. lowercase
+// 4. remove chars não-ASCII alfanuméricos
+// 5. espaços → hifens
+// 6. colapsa hifens duplos, trim bordas
 function nomeParaSlug(nome) {
   if(_slugCache[nome]) return _slugCache[nome];
   const slug = nome
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')   // remove acentos: é→e, ã→a, ç→c
-    .toLowerCase()
-    .replace(/[^a-z0-9\s\-]/g, '')    // remove parênteses, pontos, etc.
-    .replace(/\s+/g, '-')             // espaços → hifens
-    .replace(/-{2,}/g, '-')           // hifens duplos → simples
-    .replace(/^-|-$/g, '');           // trim hifens nas bordas
+    .normalize('NFD')                      // Camarão → Camara\u0303o
+    .replace(/[\u0300-\u036f]/g, '')       // remove todos diacríticos → Camarao
+    .toLowerCase()                         // CAMARAO → camarao
+    .replace(/[^a-z0-9\s\-]/g, '')        // remove (, ), ., /, etc.
+    .replace(/\s+/g, '-')                 // espaços → hifens
+    .replace(/-{2,}/g, '-')              // hifens duplos → simples
+    .replace(/^-|-$/g, '');              // trim bordas
   _slugCache[nome] = slug;
   return slug;
 }
+
+// Exemplos de saída:
+//   "Agachamento Camarão"  → "agachamento-camarao"
+//   "Supino Reto com Barra" → "supino-reto-com-barra"
+//   "Flexão 45°"           → "flexao-45"
+//   "Leg Press (90°)"      → "leg-press-90"
+//   "Bíceps (Scott)"       → "biceps-scott"
 
 // ── Pré-computa slug de todos os exercícios no boot (warm cache) ──
 function warmSlugCache() {
   if(typeof BIB !== 'undefined') BIB.forEach(e => nomeParaSlug(e.n));
 }
 
-// ── Normaliza caminho explícito da BIB — força filename lowercase ──
+// ── Normaliza gif_url da BIB: remove prefixo gifs/, força slug lowercase ──
+// NÃO usa encodeURI — string limpa para src direto
 function normalizarGifUrl(url) {
   if(!url || url.length === 0) return '';
-  // Separa pasta do filename e força lowercase só no filename
-  const clean = url.replace(/^gifs\//, '');
-  const base = clean.startsWith('http') || clean.startsWith('./') || clean.startsWith('/')
-    ? clean
-    : MEDIA_BASE_URL + clean;
-  // Força lowercase no segmento do filename (após última /)
-  const lastSlash = base.lastIndexOf('/');
-  return base.slice(0, lastSlash + 1) + base.slice(lastSlash + 1).toLowerCase();
+  if(url.startsWith('http://') || url.startsWith('https://')) return url;
+  // Remove prefixo gifs/ redundante
+  const filename = url.replace(/^\.\/gifs\//, '').replace(/^gifs\//, '');
+  // Força lowercase no filename (sem tocar extensão de path)
+  return MEDIA_BASE_URL + filename.toLowerCase();
 }
 
-// ── Monta lista de candidatos para um exercício ──
-// Ordem: url explícita → kebab.gif → kebab.mp4/webm... → nome-original.gif...
-// Todos os filenames são forçados para lowercase (GitHub Pages é case-sensitive)
+// ── Monta candidatos em ordem de prioridade — strings limpas, sem encoding ──
 function getCandidatos(nome, gifUrlExplicita) {
-  const slug = nomeParaSlug(nome); // já é lowercase
-  const nomeLC = nome.toLowerCase(); // nome original em lowercase
+  const slug  = nomeParaSlug(nome);       // kebab ASCII lowercase
   const visto = new Set();
   const lista = [];
 
   function add(u) {
-    // Força lowercase no segmento após a última /
+    // Força lowercase no segmento de filename (após última /)
     const i = u.lastIndexOf('/');
-    const normalized = u.slice(0, i + 1) + u.slice(i + 1).toLowerCase();
-    if(!visto.has(normalized)) { visto.add(normalized); lista.push(normalized); }
+    const norm = u.slice(0, i + 1) + u.slice(i + 1).toLowerCase();
+    if(!visto.has(norm)) { visto.add(norm); lista.push(norm); }
   }
 
-  // 1. URL explícita da BIB (já normalizada por normalizarGifUrl)
+  // 1. URL explícita da BIB — prioridade máxima
   const urlExpl = normalizarGifUrl(gifUrlExplicita);
   if(urlExpl) add(urlExpl);
 
-  // 2. kebab-case + todas as extensões (padrão novo — prioridade total)
+  // 2. slug kebab + extensões (padrão novo — arquivos renomeados)
   MEDIA_EXTENSIONS.forEach(ext => add(MEDIA_BASE_URL + slug + '.' + ext));
 
-  // 3. Nome original lowercased + extensões (compatibilidade: "supino reto.gif")
+  // 3. nome lowercase com espaços (legado — arquivos ainda não renomeados)
+  const nomeLC = nome.toLowerCase();
   MEDIA_EXTENSIONS.forEach(ext => add(MEDIA_BASE_URL + nomeLC + '.' + ext));
 
   return lista;
 }
 
-// ── Função usada pelo modo execução e modal de exercício ──
+// ── Função síncrona — usada no modal de exercício e modo execução ──
 function getGifForExercise(nome) {
-  const entry = BIB.find(b => b.n === nome);
-  const urlExpl = entry ? normalizarGifUrl(entry.gif_url || '') : '';
-  // slug já é lowercase por definição
-  return urlExpl || (MEDIA_BASE_URL + nomeParaSlug(nome) + '.gif');
+  const entry  = BIB.find(b => b.n === nome);
+  const urlExp = entry ? normalizarGifUrl(entry.gif_url || '') : '';
+  return urlExp || (MEDIA_BASE_URL + nomeParaSlug(nome) + '.gif');
 }
 
-// ── Resolve mídia com fallback assíncrono — chama callback(url, tipoMidia) ──
-// tipoMidia: 'img' | 'video' | null (não encontrado)
+// ── Resolve assíncrono com fallback — callback(url|null, 'img'|'video'|null) ──
 function resolveMediaUrl(nome, gifUrlExplicita, callback) {
   const candidatos = getCandidatos(nome, gifUrlExplicita);
   let idx = 0;
@@ -1613,16 +1632,14 @@ function resolveMediaUrl(nome, gifUrlExplicita, callback) {
     const ext = url.split('.').pop().toLowerCase().split('?')[0];
 
     if(MEDIA_VIDEO_EXTS.has(ext)) {
-      // Vídeo: testa com fetch HEAD para não carregar o arquivo inteiro
       fetch(url, { method: 'HEAD' })
         .then(r => r.ok ? callback(url, 'video') : tentar())
         .catch(() => tentar());
     } else {
-      // Imagem: probe com Image()
       const probe = new Image();
       probe.onload  = () => callback(url, 'img');
       probe.onerror = tentar;
-      probe.src = url;
+      probe.src = url; // string limpa — browser não re-encoda src direto
     }
   }
 
@@ -3349,8 +3366,8 @@ function bibAtualizarDebug(url, status, todosCanditados) {
 
   wrap.style.display = 'block';
 
-  // URL absoluta para o link
-  const absUrl = url ? new URL(url, window.location.href).href : '';
+  // URL absoluta sem re-encoding
+  const absUrl = toAbsUrl(url);
 
   code.textContent = absUrl || url || '—';
   link.href = absUrl || '#';
@@ -3372,7 +3389,7 @@ function bibAtualizarDebug(url, status, todosCanditados) {
     lista.innerHTML = '<div style="font-size:9px;color:var(--t3);margin-bottom:3px;">Candidatos testados:</div>'
       + todosCanditados.map((u, i) => {
           const isActive = u === url;
-          const absU = new URL(u, window.location.href).href;
+          const absU = toAbsUrl(u);
           return `<div style="display:flex;align-items:center;gap:4px;padding:1px 0;">
             <span style="font-size:9px;color:${isActive?'var(--green-d)':'var(--t3)'};flex-shrink:0;">${i+1}.</span>
             <a href="${absU}" target="_blank" rel="noopener"
