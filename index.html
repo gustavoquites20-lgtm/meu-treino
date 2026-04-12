@@ -517,6 +517,23 @@ textarea.inp{resize:vertical;min-height:60px;}
           </div>
           <div id="bib-ex-tags" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;"></div>
           <div id="bib-ex-params" style="font-size:11px;color:var(--t2);line-height:1.7;"></div>
+          <!-- Debug: URL sendo tentada -->
+          <div id="bib-debug-wrap" style="display:none;margin-top:10px;padding:7px 10px;background:var(--bg);border-radius:6px;border:0.5px dashed var(--bord);">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+              <span style="font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;">🔗 URL gerada</span>
+              <span id="bib-debug-status" style="font-size:9px;padding:1px 6px;border-radius:99px;font-weight:600;"></span>
+            </div>
+            <code id="bib-debug-code" style="font-size:10px;color:var(--t2);word-break:break-all;line-height:1.5;display:block;margin-bottom:4px;"></code>
+            <a id="bib-debug-link" href="#" target="_blank" rel="noopener"
+              style="font-size:10px;color:var(--blue);text-decoration:underline;cursor:pointer;">
+              Abrir em nova aba ↗
+            </a>
+            <div id="bib-debug-candidatos" style="display:none;margin-top:6px;border-top:0.5px solid var(--bord);padding-top:5px;"></div>
+            <button onclick="document.getElementById('bib-debug-candidatos').style.display=document.getElementById('bib-debug-candidatos').style.display==='none'?'block':'none'"
+              style="font-size:9px;color:var(--t3);background:none;border:none;cursor:pointer;margin-top:3px;padding:0;">
+              ver todos os candidatos testados ▾
+            </button>
+          </div>
           <!-- Cronômetro descanso inline -->
           <div id="bib-timer-wrap" style="display:none;margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span style="font-size:11px;color:var(--t2);">⏱ Descanso:</span>
@@ -1534,31 +1551,44 @@ function warmSlugCache() {
   if(typeof BIB !== 'undefined') BIB.forEach(e => nomeParaSlug(e.n));
 }
 
-// ── Normaliza caminho explícito da BIB ──
+// ── Normaliza caminho explícito da BIB — força filename lowercase ──
 function normalizarGifUrl(url) {
   if(!url || url.length === 0) return '';
-  if(url.startsWith('http') || url.startsWith('./') || url.startsWith('/')) return url;
-  return MEDIA_BASE_URL + url.replace(/^gifs\//, '');
+  // Separa pasta do filename e força lowercase só no filename
+  const clean = url.replace(/^gifs\//, '');
+  const base = clean.startsWith('http') || clean.startsWith('./') || clean.startsWith('/')
+    ? clean
+    : MEDIA_BASE_URL + clean;
+  // Força lowercase no segmento do filename (após última /)
+  const lastSlash = base.lastIndexOf('/');
+  return base.slice(0, lastSlash + 1) + base.slice(lastSlash + 1).toLowerCase();
 }
 
 // ── Monta lista de candidatos para um exercício ──
 // Ordem: url explícita → kebab.gif → kebab.mp4/webm... → nome-original.gif...
+// Todos os filenames são forçados para lowercase (GitHub Pages é case-sensitive)
 function getCandidatos(nome, gifUrlExplicita) {
-  const slug = nomeParaSlug(nome);
+  const slug = nomeParaSlug(nome); // já é lowercase
+  const nomeLC = nome.toLowerCase(); // nome original em lowercase
   const visto = new Set();
   const lista = [];
 
-  function add(u) { if(!visto.has(u)) { visto.add(u); lista.push(u); } }
+  function add(u) {
+    // Força lowercase no segmento após a última /
+    const i = u.lastIndexOf('/');
+    const normalized = u.slice(0, i + 1) + u.slice(i + 1).toLowerCase();
+    if(!visto.has(normalized)) { visto.add(normalized); lista.push(normalized); }
+  }
 
-  // 1. URL explícita da BIB (máxima prioridade)
+  // 1. URL explícita da BIB (já normalizada por normalizarGifUrl)
   const urlExpl = normalizarGifUrl(gifUrlExplicita);
   if(urlExpl) add(urlExpl);
 
-  // 2. kebab-case + todas as extensões (prioridade total pois é o padrão novo)
+  // 2. kebab-case + todas as extensões (padrão novo — prioridade total)
   MEDIA_EXTENSIONS.forEach(ext => add(MEDIA_BASE_URL + slug + '.' + ext));
 
-  // 3. Nome original (com acentos/espaços) + extensões (compatibilidade legada)
-  MEDIA_EXTENSIONS.forEach(ext => add(MEDIA_BASE_URL + nome + '.' + ext));
+  // 3. Nome original lowercased + extensões (compatibilidade: "supino reto.gif")
+  MEDIA_EXTENSIONS.forEach(ext => add(MEDIA_BASE_URL + nomeLC + '.' + ext));
 
   return lista;
 }
@@ -1567,7 +1597,7 @@ function getCandidatos(nome, gifUrlExplicita) {
 function getGifForExercise(nome) {
   const entry = BIB.find(b => b.n === nome);
   const urlExpl = entry ? normalizarGifUrl(entry.gif_url || '') : '';
-  // Retorna melhor candidato síncrono (para src de img)
+  // slug já é lowercase por definição
   return urlExpl || (MEDIA_BASE_URL + nomeParaSlug(nome) + '.gif');
 }
 
@@ -3214,6 +3244,12 @@ function bibSelecionarEx(nome) {
   if(!e) return;
   bibExAtual = e;
 
+  // Reset debug panel
+  const dbgWrap = document.getElementById('bib-debug-wrap');
+  if(dbgWrap) dbgWrap.style.display = 'none';
+  const dbgCand = document.getElementById('bib-debug-candidatos');
+  if(dbgCand) { dbgCand.style.display = 'none'; dbgCand.innerHTML = ''; }
+
   // Atualizar seleção visual
   document.querySelectorAll('[id^="bib-item-"]').forEach(el => {
     el.style.background = '';
@@ -3267,33 +3303,85 @@ function bibRenderMidia(urlExplicita, nomeExercicio) {
   const vid = document.getElementById('bib-media-vid');
   const ph  = document.getElementById('bib-placeholder');
 
-  // Estado de carregamento
   img.style.display = 'none';
   vid.style.display = 'none';
   ph.style.display  = 'flex';
   ph.innerHTML = '<div style="color:#555;font-size:12px;">Carregando...</div>';
+
+  // Pré-computa todos os candidatos para o debug
+  const todosCanditados = getCandidatos(nomeExercicio || '', urlExplicita || '');
+  bibAtualizarDebug(todosCanditados[0] || '', 'tentando', todosCanditados);
 
   resolveMediaUrl(nomeExercicio || '', urlExplicita || '', (url, tipo) => {
     ph.style.display = 'none';
 
     if(!url || !tipo) {
       bibMediaError('vazio');
+      bibAtualizarDebug(todosCanditados[0] || '', '404', todosCanditados);
       return;
     }
+
+    // Debug: URL que carregou com sucesso
+    bibAtualizarDebug(url, 'ok', todosCanditados);
 
     if(tipo === 'video') {
       img.style.display = 'none';
       vid.src = url;
       vid.style.display = 'block';
       vid.load();
-      vid.onerror = () => bibMediaError('vazio');
+      vid.onerror = () => { bibMediaError('vazio'); bibAtualizarDebug(url, '404', todosCanditados); };
     } else {
       vid.style.display = 'none';
       img.src = url;
       img.style.display = 'block';
-      img.onerror = () => bibMediaError('vazio');
+      img.onerror = () => { bibMediaError('vazio'); bibAtualizarDebug(url, '404', todosCanditados); };
     }
   });
+}
+
+function bibAtualizarDebug(url, status, todosCanditados) {
+  const wrap   = document.getElementById('bib-debug-wrap');
+  const code   = document.getElementById('bib-debug-code');
+  const link   = document.getElementById('bib-debug-link');
+  const badge  = document.getElementById('bib-debug-status');
+  const lista  = document.getElementById('bib-debug-candidatos');
+  if(!wrap) return;
+
+  wrap.style.display = 'block';
+
+  // URL absoluta para o link
+  const absUrl = url ? new URL(url, window.location.href).href : '';
+
+  code.textContent = absUrl || url || '—';
+  link.href = absUrl || '#';
+  link.style.display = absUrl ? 'inline' : 'none';
+
+  // Badge de status
+  const cfg = {
+    'ok':       { txt:'✓ carregou',  bg:'var(--green-l)', color:'var(--green-d)' },
+    '404':      { txt:'✕ não encontrado', bg:'var(--red-l)',   color:'var(--red)'    },
+    'tentando': { txt:'⋯ tentando',  bg:'var(--amber-l)', color:'var(--amber)'   },
+  };
+  const c = cfg[status] || cfg['tentando'];
+  badge.textContent  = c.txt;
+  badge.style.background = c.bg;
+  badge.style.color  = c.color;
+
+  // Lista de todos os candidatos
+  if(todosCanditados && todosCanditados.length > 0) {
+    lista.innerHTML = '<div style="font-size:9px;color:var(--t3);margin-bottom:3px;">Candidatos testados:</div>'
+      + todosCanditados.map((u, i) => {
+          const isActive = u === url;
+          const absU = new URL(u, window.location.href).href;
+          return `<div style="display:flex;align-items:center;gap:4px;padding:1px 0;">
+            <span style="font-size:9px;color:${isActive?'var(--green-d)':'var(--t3)'};flex-shrink:0;">${i+1}.</span>
+            <a href="${absU}" target="_blank" rel="noopener"
+              style="font-size:9px;color:${isActive?'var(--blue)':'var(--t3)'};text-decoration:${isActive?'underline':'none'};word-break:break-all;line-height:1.4;">
+              ${u}
+            </a>
+          </div>`;
+        }).join('');
+  }
 }
 
 function bibMediaError(tipo) {
