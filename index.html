@@ -1576,8 +1576,13 @@ function getCandidatos(nome) {
   const lista = [];
   function add(u) { if(!visto.has(u)) { visto.add(u); lista.push(u); } }
 
-  // Único padrão: URL_BASE + slug + extensão
+  // Padrão correto: slug + extensão simples
   MEDIA_EXTENSIONS.forEach(ext => add(MEDIA_BASE_URL + slug + '.' + ext));
+
+  // Fallback: arquivos que foram enviados com extensão dupla (ex: triceps-pulley.gif.gif)
+  // Isso acontece quando o nome original já continha .gif antes do upload
+  add(MEDIA_BASE_URL + slug + '.gif.gif');
+  add(MEDIA_BASE_URL + slug + '.gif.mp4');
 
   return lista;
 }
