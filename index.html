@@ -1569,20 +1569,50 @@ function normalizarGifUrl(url) {
   return MEDIA_BASE_URL + filename.toLowerCase();
 }
 
-// ── Candidatos: slug + extensões — sem fallback de nome com acentos ──
+// Mapa de aliases: slug do exercício → arquivo real no GitHub
+// Gerado automaticamente cruzando BIB com lista de arquivos enviados
+const MEDIA_ALIASES = {
+  'supino-reto-com-barra':                          'supino',
+  'supino-declinado-com-barra':                     'supino-com-barra-declinado',
+  'supino-inclinado-com-halteres-pegada-invertida': 'supino-inclinado-com-halteres-e-pegada-invertida',
+  'supino-inclinado-com-halteres-pegada-fechada':   'supino-inclinado-com-halteres-e-pegada-fechada',
+  'supino-unilateral-com-halteres':                 'supino-unilateral-com-halteres-com-pegada-reversa',
+  'crucifixo':                                      'crucifixo-com-halteres',
+  'pullover-com-haltere':                           'pullover-com-halteres-na-bola-de-estabilidade',
+  'pullover-de-braco-reto-com-halteres':            'pullover-de-braco-reto-com-halteres-joelhos-a-90-graus-',
+  'supino-com-kettlebell':                          'supino-com-kettlebell-de-um-braco',
+  'supino-unilateral-com-cabo':                     'supino-unilateral-no-cabo',
+  'supino-declinado-unilateral-pegada-martelo':     'supino-declinado-unilateral-pegada-martelo-com-haltere',
+  'encolhimento-com-barra':                         'encolhimento-de-barra',
+  'elevacao-lateral-com-halteres':                  'elevacao-lateral-de-bracos-com-halteres',
+  'elevacao-frontal-com-barra':                     'levantamento-frontal-com-barra',
+  // .gif.gif duplos — o app tenta ambos automaticamente
+  'triceps-pulley-corda':                           'triceps-pulley-corda',
+  'puxada-para-o-rosto':                            'puxada-para-o-rosto',
+  'encolhimento-com-halteres':                      'encolhimento-com-halteres',
+  'remada-alta-com-cabo':                           'remada-alta-com-cabo',
+  'voador-invertido':                               'voador-invertido',
+};
+
 function getCandidatos(nome) {
   const slug  = nomeParaSlug(nome);
   const visto = new Set();
   const lista = [];
   function add(u) { if(!visto.has(u)) { visto.add(u); lista.push(u); } }
 
-  // Padrão correto: slug + extensão simples
+  // Verifica alias primeiro (arquivo com nome diferente no servidor)
+  const alias = MEDIA_ALIASES[slug];
+  if(alias) {
+    MEDIA_EXTENSIONS.forEach(ext => add(MEDIA_BASE_URL + alias + '.' + ext));
+    // também tenta .gif.gif para aliases que foram enviados com dupla extensão
+    add(MEDIA_BASE_URL + alias + '.gif.gif');
+  }
+
+  // Padrão principal: slug + extensão
   MEDIA_EXTENSIONS.forEach(ext => add(MEDIA_BASE_URL + slug + '.' + ext));
 
-  // Fallback: arquivos que foram enviados com extensão dupla (ex: triceps-pulley.gif.gif)
-  // Isso acontece quando o nome original já continha .gif antes do upload
+  // Fallback: .gif.gif (arquivos enviados com extensão dupla)
   add(MEDIA_BASE_URL + slug + '.gif.gif');
-  add(MEDIA_BASE_URL + slug + '.gif.mp4');
 
   return lista;
 }
